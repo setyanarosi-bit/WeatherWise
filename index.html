@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="WeatherWise - Aplikasi cuaca real-time untuk informasi cuaca akurat">
+    <meta name="theme-color" content="#1E90FF">
+
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <!-- Leaflet CSS (map) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- Favicon like SVG data URL (simple cloud icon) -->
+  <link rel="icon" href='data:image/svg+xml;utf8,
+    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="%2354A0FF"/><stop offset="1" stop-color="%23FFFFFF"/></linearGradient></defs>
+      <rect width="100%" height="100%" fill="%23F5F7FA"/>
+      <g transform="translate(8,12)"><path d="M44 28c0-6.627-5.373-12-12-12-1.225 0-2.405.183-3.5.525C26.148 8.83 20.8 6 14 6 6.268 6 0 12.268 0 20c0 7.732 6.268 14 14 14h30c4.418 0 8-3.582 8-8s-3.582-8-8-8z" fill="url(%23g)"/></g>
+    </svg>'>
+
+  <style>
+    :root{
+      --bg-light:#F5F7FA; --text-light:#2C3E50; --bg-dark:#1B2A41; --text-dark:#ECF0F1;
+      --accent-sun:#FFC300; --accent-rain:#54A0FF; --neutral:#BDC3C7;
+    }
+    /* Light theme (default) */
+    body.light { background: var(--bg-light); color: var(--text-light); }
+    .card.light { background: white; color: var(--text-light); }
+    /* Dark theme */
+    body.dark { background: var(--bg-dark); color: var(--text-dark); }
+    .card.dark { background:#0f1622; color: var(--text-dark); border-color: rgba(255,255,255,0.06); }
+
+    /* App logo */
+    .app-logo { width:42px; height:42px; display:inline-block; vertical-align:middle; }
+    .logo-text { font-weight:600; margin-left:8px; font-size:1.15rem; vertical-align:middle; }
+
+    /* Map */
+    #map { height: 280px; border-radius: .5rem; }
+
+    /* Animated weather icons simplified */
+    .weather-icon { width:72px; height:72px; display:inline-block; }
+    .icon-cloud { animation: float 6s ease-in-out infinite; }
+    @keyframes float { 0%{transform:translateY(0)}50%{transform:translateY(-6px)}100%{transform:translateY(0)}}
+
+    /* Loading spinner custom */
+    .spinner-dot {
+      width:14px;height:14px;border-radius:50%;display:inline-block;margin:0 3px;opacity:.85;
+      animation: dots 1s infinite ease-in-out;
+    }
+    .spinner-dot:nth-child(2){ animation-delay:0.15s;}
+    .spinner-dot:nth-child(3){ animation-delay:0.3s;}
+    @keyframes dots{0%{transform:scale(.6);opacity:.3}50%{transform:scale(1);opacity:1}100%{transform:scale(.6);opacity:.3}}
+
+    /* Responsive tweaks */
+    .sidebar { max-height: calc(100vh - 120px); overflow:auto; padding-bottom:1rem; }
+
+    /* Favorite badge */
+    .fav-badge { cursor:pointer; }
+
+    /* Profile media preview */
+    .profile-media { max-height:120px; max-width:120px; object-fit:cover; border-radius:8px; display:block; margin-bottom:8px; }
+
+    /* Small helpers */
+    .muted-small { font-size:.85rem; color:var(--neutral); }
+  </style>
+</head>
+
+<body class="light">
+  <nav class="navbar navbar-expand-lg shadow-sm mb-3" id="topbar">
+    <div class="container-fluid">
+      <div class="d-flex align-items-center">
+        <div class="app-logo" id="appLogo" title="WeatherWise">
+          <!-- inline minimal cloud svg -->
+          <svg viewBox="0 0 64 64" width="100%" height="100%"><defs><linearGradient id="lg" x1="0" x2="1"><stop offset="0" stop-color="#54A0FF"/><stop offset="1" stop-color="#FFFFFF"/></linearGradient></defs><path d="M44 28c0-6.627-5.373-12-12-12-1.225 0-2.405.183-3.5.525C26.148 8.83 20.8 6 14 6 6.268 6 0 12.268 0 20c0 7.732 6.268 14 14 14h30c4.418 0 8-3.582 8-8s-3.582-8-8-8z" fill="url(#lg)"/></svg>
+        </div>
+        <div class="logo-text ms-2">WeatherWise</div>
+      </div>
+
+      <div class="d-flex align-items-center">
+        <div class="me-3">
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="themeToggle">
+            <label class="form-check-label small" for="themeToggle" id="themeLabel">Dark</label>
+          </div>
+        </div>
+        <div class="me-2">
+          <select id="langSelect" class="form-select form-select-sm" style="width:auto;">
+            <option value="id">ID</option>
+            <option value="en">EN</option>
+          </select>
+        </div>
+        <button class="btn btn-outline-primary btn-sm me-2" id="installBtn" style="display:none;">Install</button>
+        <button class="btn btn-outline-secondary btn-sm" id="settingsBtn" title="Settings ⚙️">⚙️</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container">
+    <div class="row g-3">
+      <!-- LEFT: Search / Favorites / Profile -->
+      <div class="col-12 col-lg-4">
+        <div class="card p-3 mb-3 light" id="searchCard">
+          <div class="d-flex justify-content-between align-items-start">
+            <div>
+              <h5 id="lblSearch">Cari Lokasi</h5>
+              <div class="muted-small" id="lblSubtitle">Masukkan nama kota atau klik peta</div>
+            </div>
+            <div>
+              <button class="btn btn-sm btn-outline-secondary" id="useLocationBtn" title="Gunakan lokasi saya">📍</button>
+            </div>
+          </div>
+
+          <div class="input-group my-3">
+            <input id="searchInput" type="text" class="form-control" placeholder="Contoh: Jakarta atau 3.1390,101.6869">
+            <button class="btn btn-primary" id="searchBtn">Cari</button>
+          </div>
+
+          <div id="loadingInline" style="display:none;">
+            <div class="d-flex align-items-center">
+              <div class="spinner-dot" style="background:#54A0FF"></div>
+              <div class="spinner-dot" style="background:#FFC300"></div>
+              <div class="spinner-dot" style="background:#2C3E50"></div>
+              <div class="ms-2 muted-small" id="loadingText">Memuat...</div>
+            </div>
+          </div>
+
+          <div class="mb-3" id="currentSummary" style="display:none;">
+            <div class="d-flex align-items-center">
+              <div class="me-3">
+                <div id="currentIcon" class="weather-icon icon-cloud"></div>
+              </div>
+              <div>
+                <div id="curCity" style="font-weight:600; font-size:1.05rem">-</div>
+                <div id="curTemp" class="muted-small">--°C • --</div>
+              </div>
+            </div>
+
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-outline-success btn-sm" id="saveFavBtn">Simpan</button>
+              <button class="btn btn-outline-primary btn-sm" id="detailsBtn">Detail</button>
+            </div>
+          </div>
+
+          <hr/>
+
+          <h6>Favorit</h6>
+          <div id="favoritesList" class="sidebar"></div>
+        </div>
+
+        <div class="card p-3 mb-3 light">
+          <div class="d-flex gap-3 align-items-start">
+            <div>
+           
+  <h3 class="fw-bold mb-3">Profil</h3>
+
+  <!-- FOTO PROFIL (DITAMPILKAN DI ATAS NAMA) -->
+  <div class="text-center mb-3">
+      <img id="profilePreview" class="profile-media" src="fotoprofil.jpg" alt="Foto Profil"/>
+  </div>
+
+
+
+</section>
+
+              <video id="profileVideoPreview" class="profile-media" controls style="display:none"></video>
+            </div>
+            <div style="flex:1">
+              <div class="mb-2"><strong id="profileName">Setyanarosi Nanda Julitasari</strong></div>
+              <div class="muted-small">Jurusan: <span id="profileMajor">Bisnis Digital</span></div>
+              <div class="muted-small">Universitas: <span id="profileUniv">Universitas Sugeng Hartono</span></div>
+
+              <div class="mt-2">
+                <label class="form-label small">Upload foto</label>
+                <input type="file" accept="image/*" id="profileImageInput" class="form-control form-control-sm mb-2">
+                <label class="form-label small">Atau upload video (opsional)</label>
+                <input type="file" accept="video/*" id="profileVideoInput" class="form-control form-control-sm">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card p-3 light">
+          <h6>Petunjuk Cepat</h6>
+          <ul>
+            <li class="muted-small">Masukkan nama kota atau koordinat. Klik "Cari".</li>
+            <li class="muted-small">Klik "Simpan" untuk menyimpan favorite (tersimpan otomatis di browser).</li>
+            <li class="muted-small">Masukkan API key OpenWeatherMap di Settings untuk data nyata.</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- RIGHT: Map + Details -->
+      <div class="col-12 col-lg-8">
+        <div class="card p-3 mb-3 light">
+          <div class="d-flex justify-content-between mb-2">
+            <div>
+              <h5 id="panelTitle">Cuaca Saat Ini</h5>
+              <div class="muted-small" id="panelSub">Pilih lokasi atau gunakan pencarian</div>
+            </div>
+            <div class="text-end">
+              <div class="muted-small">Mode: <span id="weatherMode">--</span></div>
+              <div class="muted-small">AQI: <span id="aqiVal">--</span></div>
+            </div>
+          </div>
+
+          <div id="map" class="mb-3"></div>
+
+          <div class="row g-3">
+            <div class="col-12 col-md-6">
+              <div class="card p-3 light">
+                <h6>Detail Real-time</h6>
+                <div class="d-flex justify-content-between">
+                  <div>
+                    <div class="muted-small">Suhu</div>
+                    <div id="tempNow" style="font-weight:600; font-size:1.25rem">--°C</div>
+                  </div>
+                  <div>
+                    <div class="muted-small">Kelembapan</div>
+                    <div id="humNow" style="font-weight:600">--%</div>
+                  </div>
+                  <div>
+                    <div class="muted-small">Angin</div>
+                    <div id="windNow" style="font-weight:600">-- m/s</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12 col-md-6">
+              <div class="card p-3 light">
+                <h6>Grafik 24 Jam</h6>
+                <canvas id="hourlyChart" height="140"></canvas>
+              </div>
+            </div>
+
+            <div class="col-12">
+              <div class="card p-3 light">
+                <h6>Prakiraan 7 Hari</h6>
+                <div id="weeklyList" class="d-flex gap-2 overflow-auto"></div>
+              </div>
+            </div>
+
+            <div class="col-12">
+              <div class="card p-3 light">
+                <h6>Data Historis ()</h6>
+                <div class="muted-small">Simpan dan analisis tren cuaca beberapa hari terakhir (jika tersedia dari API)</div>
+                <canvas id="historicalChart" height="80"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Settings modal -->
+  <div class="modal fade" id="settingsModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Settings</h5>
+          <button class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="settingsForm">
+            <div class="mb-3">
+              <label class="form-label">OpenWeatherMap API Key</label>
+              <input type="text" id="owmKey" class="form-control" placeholder="Masukkan API key OpenWeatherMap (wajib untuk data real)">
+              <div class="form-text">Cakupan: Current, OneCall, Air Pollution, Geocoding.</div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Map provider</label>
+              <select id="mapProvider" class="form-select">
+                <option value="osm">OpenStreetMap (default)</option>
+                <option value="google">Google Maps (memerlukan API key)</option>
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Bahasa</label>
+              <select id="uiLang" class="form-select">
+                <option value="id">Bahasa Indonesia</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Unit suhu</label>
+              <select id="unitTemp" class="form-select">
+                <option value="metric">Celsius (°C)</option>
+                <option value="imperial">Fahrenheit (°F)</option>
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Notifikasi cuaca ekstrim</label>
+              <div class="form-check form-switch">
+                <input class="form-check-input" id="notifSwitch" type="checkbox">
+                <label class="form-check-label" for="notifSwitch">Aktifkan notifikasi browser</label>
+              </div>
+              <div class="form-text">Aplikasi akan meminta izin notifikasi di browser jika di-enable.</div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Bahasa API (opsional)</label>
+              <input type="text" id="apiLang" class="form-control" placeholder="ex: id, en">
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+          <button class="btn btn-primary" id="saveSettingsBtn">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bootstrap + Popper -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- Leaflet -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+  /* ===========================
+     WeatherWise - single-file PWA
+     =========================== */
+
+  // ---- App state & defaults ----
+  const state = {
+    apiKey: localStorage.getItem('ww_owmKey') || '',
+    unit: localStorage.getItem('ww_unit') || 'metric',
+    language: localStorage.getItem('ww_lang') || 'id',
+    uiLang: localStorage.getItem('ww_uiLang') || 'id',
+    theme: localStorage.getItem('ww_theme') || 'light',
+    favorites: JSON.parse(localStorage.getItem('ww_favs') || '[]'),
+    profile: JSON.parse(localStorage.getItem('ww_profile') || JSON.stringify({
+      name: 'Setyanarosi Nanda Julitasari',
+      major: 'Bisnis Digital',
+      univ: 'Universitas Sugeng Hartono',
+      photo: null,
+      video: null
+    })),
+    lastLocation: JSON.parse(localStorage.getItem('ww_lastloc') || 'null'),
+    deferredPrompt: null
+  };
+
+  // UI elements
+  const themeToggle = document.getElementById('themeToggle');
+  const themeLabel = document.getElementById('themeLabel');
+  const langSelect = document.getElementById('langSelect');
+  const searchInput = document.getElementById('searchInput');
+  const searchBtn = document.getElementById('searchBtn');
+  const loadingInline = document.getElementById('loadingInline');
+  const loadingText = document.getElementById('loadingText');
+  const currentSummary = document.getElementById('currentSummary');
+  const curCity = document.getElementById('curCity');
+  const curTemp = document.getElementById('curTemp');
+  const saveFavBtn = document.getElementById('saveFavBtn');
+  const favoritesList = document.getElementById('favoritesList');
+  const useLocationBtn = document.getElementById('useLocationBtn');
+  const settingsBtn = document.getElementById('settingsBtn');
+  const settingsModal = new bootstrap.Modal(document.getElementById('settingsModal'));
+  const owmKeyInput = document.getElementById('owmKey');
+  const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+  const aqiVal = document.getElementById('aqiVal');
+  const tempNow = document.getElementById('tempNow');
+  const humNow = document.getElementById('humNow');
+  const windNow = document.getElementById('windNow');
+  const hourlyChartEl = document.getElementById('hourlyChart');
+  const weeklyList = document.getElementById('weeklyList');
+  const historicalChartEl = document.getElementById('historicalChart');
+  const panelTitle = document.getElementById('panelTitle');
+  const panelSub = document.getElementById('panelSub');
+  const profilePreview = document.getElementById('profilePreview');
+  const profileName = document.getElementById('profileName');
+  const profileMajor = document.getElementById('profileMajor');
+  const profileUniv = document.getElementById('profileUniv');
+  const profileImageInput = document.getElementById('profileImageInput');
+  const profileVideoInput = document.getElementById('profileVideoInput');
+  const profileVideoPreview = document.getElementById('profileVideoPreview');
+  const settingsForm = document.getElementById('settingsForm');
+  const langUiSelect = document.getElementById('uiLang');
+  const unitTemp = document.getElementById('unitTemp');
+  const notifSwitch = document.getElementById('notifSwitch');
+  const installBtn = document.getElementById('installBtn');
+  const detailsBtn = document.getElementById('detailsBtn');
+
+  // Charts
+  let hourlyChart = null;
+  let historicalChart = null;
+
+  // ---- Initialize UI ----
+  function initUI(){
+    // theme
+    document.body.className = state.theme;
+    themeToggle.checked = (state.theme === 'dark');
+    themeLabel.textContent = state.theme === 'dark' ? 'Light' : 'Dark';
+
+    // language
+    langSelect.value = state.uiLang;
+    langUiSelect.value = state.uiLang;
+    unitTemp.value = state.unit;
+    owmKeyInput.value = state.apiKey || '';
+
+    // profile
+    profileName.textContent = state.profile.name;
+    profileMajor.textContent = state.profile.major;
+    profileUniv.textContent = state.profile.univ;
+    if(state.profile.photo){ profilePreview.src = state.profile.photo; profilePreview.style.display='block'; }
+    else { profilePreview.src=''; profilePreview.style.display='none'; }
+    if(state.profile.video){ profileVideoPreview.src = state.profile.video; profileVideoPreview.style.display='block'; } else profileVideoPreview.style.display='none';
+
+    // favorites list
+    renderFavorites();
+
+    // install prompt
+    window.addEventListener('beforeinstallprompt', (e)=>{
+      e.preventDefault();
+      state.deferredPrompt = e;
+      installBtn.style.display = 'inline-block';
+    });
+    installBtn.addEventListener('click', async ()=>{
+      if(state.deferredPrompt){
+        state.deferredPrompt.prompt();
+        const choice = await state.deferredPrompt.userChoice;
+        state.deferredPrompt = null;
+        installBtn.style.display = 'none';
+      }
+    });
+  }
+
+  // ---- Map init (Leaflet) ----
+  const map = L.map('map', { center:[-6.200000,106.816666], zoom:5, attributionControl:false });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap'
+  }).addTo(map);
+  let marker = null;
+  function setMapMarker(lat,lng,label){
+    if(marker) marker.setLatLng([lat,lng]);
+    else marker = L.marker([lat,lng]).addTo(map);
+    marker.bindPopup(label || 'Lokasi').openPopup();
+    map.setView([lat,lng], 10);
+  }
+  map.on('click', function(e){
+    const {lat,lng} = e.latlng;
+    fetchWeatherByCoords(lat,lng);
+  });
+
+  // ---- Helpers: localStorage sync ----
+  function saveState(){
+    localStorage.setItem('ww_favs', JSON.stringify(state.favorites));
+    localStorage.setItem('ww_owmKey', state.apiKey || '');
+    localStorage.setItem('ww_unit', state.unit);
+    localStorage.setItem('ww_lang', state.language);
+    localStorage.setItem('ww_uiLang', state.uiLang);
+    localStorage.setItem('ww_theme', state.theme);
+    localStorage.setItem('ww_profile', JSON.stringify(state.profile));
+    if(state.lastLocation) localStorage.setItem('ww_lastloc', JSON.stringify(state.lastLocation));
+  }
+
+  function renderFavorites(){
+    favoritesList.innerHTML = '';
+    if(state.favorites.length === 0){
+      favoritesList.innerHTML = '<div class="muted-small">Belum ada favorite</div>';
+      return;
+    }
+    state.favorites.forEach((f, idx)=>{
+      const el = document.createElement('div');
+      el.className = 'd-flex align-items-center justify-content-between gap-2 mb-2';
+      el.innerHTML = `
+        <div>
+          <div style="font-weight:600">${f.name}</div>
+          <div class="muted-small">${f.lat.toFixed(3)}, ${f.lon.toFixed(3)}</div>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-primary" data-idx="${idx}" data-lat="${f.lat}" data-lon="${f.lon}">Buka</button>
+          <button class="btn btn-sm btn-outline-danger" data-del="${idx}">Hapus</button>
+        </div>
+      `;
+      favoritesList.appendChild(el);
+    });
+
+    // attach listeners
+    favoritesList.querySelectorAll('[data-idx]').forEach(btn=>{
+      btn.addEventListener('click', ()=> {
+        const lat = parseFloat(btn.dataset.lat), lon = parseFloat(btn.dataset.lon);
+        fetchWeatherByCoords(lat,lon);
+      });
+    });
+    favoritesList.querySelectorAll('[data-del]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = parseInt(btn.dataset.del);
+        state.favorites.splice(idx,1);
+        saveState(); renderFavorites();
+      });
+    });
+  }
+
+  // ---- Loading UI ----
+  function showLoading(txt='Memuat...'){ loadingText.textContent = txt; loadingInline.style.display='block'; }
+  function hideLoading(){ loadingInline.style.display='none'; }
+
+  // ---- Weather API calls (OpenWeatherMap) ----
+  // Note: require user to set API key in settings. We'll use One Call API (current + hourly + daily) and Air Pollution for AQI.
+  async function geocodeCity(q){
+    // check if lat,lng provided as "lat,lon"
+    const coordMatch = q.trim().match(/^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$/);
+    if(coordMatch){
+      return { lat: parseFloat(coordMatch[1]), lon: parseFloat(coordMatch[3]), name:`${coordMatch[1]},${coordMatch[3]}` };
+    }
+    if(!state.apiKey) return null;
+    const url = `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(q)}&limit=5&appid=${state.apiKey}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('Gagal geocode');
+    const data = await res.json();
+    if(data && data.length) return { lat: data[0].lat, lon: data[0].lon, name: `${data[0].name}${data[0].country ? ', ' + data[0].country : ''}` };
+    return null;
+  }
+
+  async function fetchWeatherByCoords(lat, lon){
+    panelTitle.textContent = 'Memuat cuaca...';
+    panelSub.textContent = `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+    showLoading('Memuat cuaca...');
+    try{
+      // Save last location
+      state.lastLocation = {lat,lon};
+      saveState();
+
+      // Set map marker
+      setMapMarker(lat,lon, 'Lokasi dipilih');
+
+      if(!state.apiKey){
+        // Demo fallback: show placeholder
+        hideLoading();
+        panelTitle.textContent = 'Contoh Data (API key belum disetel)';
+        panelSub.textContent = `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+        populatePlaceholder();
+        return;
+      }
+
+      const units = state.unit || 'metric';
+      const lang = document.getElementById('apiLang').value || state.uiLang || 'id';
+
+      // One Call 3.0 may be paid; we'll try One Call 2.5 (endpoint: /data/2.5/onecall) as fallback
+      const onecallUrl = `https://api.openweathermap.org/data/2.5/onecall?lat=${lat}&lon=${lon}&units=${units}&lang=${lang}&appid=${state.apiKey}`;
+      const [oneRes, airRes] = await Promise.all([
+        fetch(onecallUrl),
+        fetch(`https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${state.apiKey}`)
+      ]);
+      if(!oneRes.ok) throw new Error('Gagal ambil cuaca');
+      const oneData = await oneRes.json();
+      const airData = airRes.ok ? await airRes.json() : null;
+
+      // Update UI
+      populateWeather(oneData, airData);
+      hideLoading();
+
+      // Cache the API responses for offline use via service worker (SW will handle)
+    } catch(err){
+      hideLoading();
+      panelTitle.textContent = 'Gagal memuat data';
+      panelSub.textContent = err.message || err;
+      console.error(err);
+      // Try to show cached data if any (SW will serve)
+    }
+  }
+
+  async function fetchWeatherByQuery(q){
+    showLoading('Mencari lokasi...');
+    try{
+      const geo = await geocodeCity(q);
+      hideLoading();
+      if(!geo){
+        panelTitle.textContent = 'Lokasi tidak ditemukan';
+        return;
+      }
+      await fetchWeatherByCoords(geo.lat, geo.lon);
+      curCity.textContent = geo.name || `${geo.lat}, ${geo.lon}`;
+      currentSummary.style.display = 'block';
+    } catch(err){
+      hideLoading();
+      panelTitle.textContent = 'Gagal mencari lokasi';
+      panelSub.textContent = err.message || err;
+      console.error(err);
+    }
+  }
+
+  // ---- Populate weather UI ----
+  function populateWeather(data, air){
+    // data: onecall response
+    const cur = data.current;
+    const cityName = state.lastLocation ? `${state.lastLocation.lat.toFixed(3)}, ${state.lastLocation.lon.toFixed(3)}` : 'Lokasi';
+    panelTitle.textContent = `Cuaca: ${cur.weather[0].description}`;
+    panelSub.textContent = `Terakhir diupdate: ${new Date(cur.dt * 1000).toLocaleString()}`;
+    curCity.textContent = cityName;
+    const tempUnit = state.unit === 'imperial' ? '°F' : '°C';
+    curTemp.textContent = `${Math.round(cur.temp)}${tempUnit} • ${cur.weather[0].main}`;
+    tempNow.textContent = `${Math.round(cur.temp)}${tempUnit}`;
+    humNow.textContent = `${cur.humidity}%`;
+    windNow.textContent = `${cur.wind_speed} m/s`;
+
+    // AQI
+    if(air && air.list && air.list.length){
+      const aqi = air.list[0].main.aqi;
+      aqiVal.textContent = `${aqi} (${aqiDesc(aqi, state.uiLang)})`;
+    } else aqiVal.textContent = '--';
+
+    // weather icon animation (simple)
+    const iconDiv = document.getElementById('currentIcon');
+    iconDiv.innerHTML = svgForWeather(cur.weather[0].main);
+
+    // hourly chart (24)
+    const hours = data.hourly.slice(0,24);
+    const labels = hours.map(h => new Date(h.dt * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+    const temps = hours.map(h=> Math.round(h.temp));
+    renderHourlyChart(labels, temps);
+
+    // weekly list
+    weeklyList.innerHTML = '';
+    (data.daily || []).slice(0,7).forEach(day=>{
+      const div = document.createElement('div');
+      div.className = 'text-center p-2';
+      div.style.minWidth = '110px';
+      div.innerHTML = `
+        <div style="font-weight:600">${new Date(day.dt*1000).toLocaleDateString()}</div>
+        <div class="muted-small">${day.weather[0].main}</div>
+        <div style="margin-top:6px;font-weight:600">${Math.round(day.temp.min)} / ${Math.round(day.temp.max)} ${state.unit==='imperial'?'°F':'°C'}</div>
+      `;
+      weeklyList.appendChild(div);
+    });
+
+    // historical chart (example: use hourly for previous 48 as "historical")
+    const hLabels = data.hourly.slice(0,48).map(h=> new Date(h.dt*1000).toLocaleString());
+    const hTemps = data.hourly.slice(0,48).map(h=> Math.round(h.temp));
+    renderHistoricalChart(hLabels, hTemps);
+
+    // show save button visible
+    currentSummary.style.display = 'block';
+    saveFavBtn.dataset.lat = state.lastLocation.lat;
+    saveFavBtn.dataset.lon = state.lastLocation.lon;
+    saveFavBtn.dataset.name = cur.weather[0].main;
+  }
+
+  function aqiDesc(aqi, lang='id'){
+    // 1-5 mapping from OWM
+    const map_en = ['Good','Fair','Moderate','Poor','Very Poor'];
+    const map_id = ['Baik','Sedang','Tidak Sehat (Ringan)','Buruk','Sangat Buruk'];
+    return (lang==='en'?map_en:map_id)[Math.max(0,Math.min(4,aqi-1))] || '--';
+  }
+
+  function svgForWeather(main){
+    // Very simple stylized SVG icons for main conditions (sun/cloud/rain)
+    main = (main || '').toLowerCase();
+    if(main.includes('rain')||main.includes('drizzle')) {
+      return `<svg class="icon-cloud" viewBox="0 0 64 64" width="72" height="72"><path d="M20 26c0-6 5-11 11-11 2 0 4 .5 5.7 1.5C38.5 12 43 10 48 10c7 0 12 5 12 12 0 6-4 11-10 12" fill="none" stroke="#54A0FF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><g fill="#54A0FF"><ellipse cx="22" cy="54" rx="3" ry="5"/><ellipse cx="32" cy="54" rx="3" ry="5"/><ellipse cx="42" cy="54" rx="3" ry="5"/></g></svg>`;
+    } else if(main.includes('cloud')) {
+      return `<svg class="icon-cloud" viewBox="0 0 64 64" width="72" height="72"><path d="M44 28c0-6.627-5.373-12-12-12-1.225 0-2.405.183-3.5.525C26.148 8.83 20.8 6 14 6 6.268 6 0 12.268 0 20c0 7.732 6.268 14 14 14h30c4.418 0 8-3.582 8-8s-3.582-8-8-8z" fill="#BDC3C7"/></svg>`;
+    } else { // sunny
+      return `<svg class="icon-cloud" viewBox="0 0 64 64" width="72" height="72"><circle cx="32" cy="28" r="8" fill="#FFC300"/><g stroke="#FFC300" stroke-width="2"><line x1="32" y1="4" x2="32" y2="12"/><line x1="32" y1="44" x2="32" y2="52"/><line x1="4" y1="28" x2="12" y2="28"/><line x1="52" y1="28" x2="60" y2="28"/><line x1="12" y1="12" x2="18" y2="18"/><line x1="46" y1="46" x2="52" y2="52"/></g></svg>`;
+    }
+  }
+
+  function populatePlaceholder(){
+    panelTitle.textContent = 'Contoh: Cerah, 28°C';
+    panelSub.textContent = 'Gunakan Settings > masukkan OpenWeatherMap API key untuk data real';
+    curCity.textContent = 'Jakarta';
+    curTemp.textContent = '28°C • Clear';
+    tempNow.textContent = '28°C';
+    humNow.textContent = '60%';
+    windNow.textContent = '3 m/s';
+    aqiVal.textContent = '2 (Sedang)';
+    document.getElementById('currentIcon').innerHTML = svgForWeather('Clear');
+
+    // sample charts
+    const labels = Array.from({length:24}, (_,i)=> `${i}:00`);
+    const temps = labels.map((_,i)=> 24 + Math.round(6*Math.sin(i/3)));
+    renderHourlyChart(labels, temps);
+    renderHistoricalChart(labels.concat(labels), temps.concat(temps));
+    weeklyList.innerHTML = '';
+    for(let i=0;i<7;i++){
+      const div = document.createElement('div');
+      div.className='text-center p-2';
+      div.style.minWidth='110px';
+      div.innerHTML = `<div style="font-weight:600">Hari ${i+1}</div><div class="muted-small">Cloudy</div><div style="margin-top:6px;font-weight:600">${20+i} / ${28+i} °C</div>`;
+      weeklyList.appendChild(div);
+    }
+  }
+
+  // ---- Charts renderers ----
+  function renderHourlyChart(labels, temps){
+    if(hourlyChart) hourlyChart.destroy();
+    hourlyChart = new Chart(hourlyChartEl, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: state.unit === 'imperial' ? '°F' : '°C',
+          data: temps,
+          fill: true,
+          tension: .3,
+          borderWidth:2,
+          pointRadius:2
+        }]
+      },
+      options: { responsive:true, plugins:{legend:{display:false}} }
+    });
+  }
+
+  function renderHistoricalChart(labels, temps){
+    if(historicalChart) historicalChart.destroy();
+    historicalChart = new Chart(historicalChartEl, {
+      type:'bar',
+      data:{ labels, datasets:[{ label:'Temp', data:temps, borderWidth:0 }]},
+      options:{ responsive:true, plugins:{legend:{display:false}}, scales:{x:{display:false}}}
+    });
+  }
+
+  // ---- Event listeners ----
+  searchBtn.addEventListener('click', ()=> {
+    const q = searchInput.value.trim();
+    if(!q) return;
+    fetchWeatherByQuery(q);
+  });
+  searchInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ searchBtn.click(); }});
+  useLocationBtn.addEventListener('click', ()=> {
+    if(navigator.geolocation) {
+      showLoading('Mendeteksi lokasi...');
+      navigator.geolocation.getCurrentPosition(pos=>{
+        hideLoading();
+        fetchWeatherByCoords(pos.coords.latitude, pos.coords.longitude);
+      }, err=>{
+        hideLoading();
+        alert('Gagal dapat lokasi: '+err.message);
+      });
+    } else alert('Geolocation tidak tersedia');
+  });
+
+  saveFavBtn.addEventListener('click', ()=>{
+    if(!state.lastLocation) return alert('Pilih lokasi terlebih dulu');
+    const lat = state.lastLocation.lat, lon = state.lastLocation.lon;
+    state.favorites.push({ name: curCity.textContent || 'Saved', lat, lon });
+    saveState(); renderFavorites();
+  });
+
+  settingsBtn.addEventListener('click', ()=> settingsModal.show());
+  saveSettingsBtn.addEventListener('click', ()=>{
+    state.apiKey = owmKeyInput.value.trim();
+    state.unit = unitTemp.value;
+    state.uiLang = langUiSelect.value;
+    // notifications
+    if(notifSwitch.checked && Notification && Notification.permission !== 'granted'){
+      Notification.requestPermission().then(p=>{
+        if(p==='granted') alert('Notifikasi diaktifkan');
+      });
+    }
+    saveState();
+    settingsModal.hide();
+    alert('Settings tersimpan. Jika memasukkan API key, coba cari lokasi untuk memuat data nyata.');
+  });
+
+  // theme toggle
+  themeToggle.addEventListener('change', ()=>{
+    state.theme = themeToggle.checked ? 'dark' : 'light';
+    document.body.className = state.theme;
+    saveState();
+    themeLabel.textContent = state.theme === 'dark'? 'Light' : 'Dark';
+    // change card classes
+    document.querySelectorAll('.card').forEach(c=> c.classList.toggle('dark', state.theme==='dark'));
+  });
+
+  // lang select (UI)
+  langSelect.addEventListener('change', ()=>{
+    state.uiLang = langSelect.value;
+    saveState();
+    // For brevity we do simple static label changes
+    if(state.uiLang==='en'){
+      document.getElementById('lblSearch').textContent = 'Search location';
+      document.getElementById('lblSubtitle').textContent = 'Type city name or click map';
+      document.getElementById('panelTitle').textContent = 'Current Weather';
+    } else {
+      document.getElementById('lblSearch').textContent = 'Cari Lokasi';
+      document.getElementById('lblSubtitle').textContent = 'Masukkan nama kota atau klik peta';
+      document.getElementById('panelTitle').textContent = 'Cuaca Saat Ini';
+    }
+  });
+
+  // profile upload
+  profileImageInput.addEventListener('change', (e)=>{
+    const f = e.target.files[0];
+    if(!f) return;
+    const r = new FileReader();
+    r.onload = ()=> { state.profile.photo = r.result; saveState(); profilePreview.src = r.result; profilePreview.style.display='block'; };
+    r.readAsDataURL(f);
+  });
+  profileVideoInput.addEventListener('change', (e)=>{
+    const f = e.target.files[0];
+    if(!f) return;
+    const r = new FileReader();
+    r.onload = ()=> { state.profile.video = r.result; saveState(); profileVideoPreview.src = r.result; profileVideoPreview.style.display='block'; };
+    r.readAsDataURL(f);
+  });
+
+  // load last location on start
+  window.addEventListener('load', ()=>{
+    initUI();
+    // apply card theme
+    document.querySelectorAll('.card').forEach(c=> c.classList.toggle('dark', state.theme==='dark'));
+    // load last location
+    if(state.lastLocation){
+      fetchWeatherByCoords(state.lastLocation.lat, state.lastLocation.lon);
+    } else {
+      populatePlaceholder();
+    }
+    // register service worker & manifest
+    registerManifestAndServiceWorker();
+  });
+
+  // ---- Simple notifications for extreme weather (demo) ----
+  function maybeNotifyExtreme(data){
+    if(!('Notification' in window) || Notification.permission !== 'granted') return;
+    // basic heuristics: very low temp or high wind or rain heavy
+    const cur = data && data.current;
+    if(!cur) return;
+    const severe = (cur.wind_speed && cur.wind_speed > 15) || (cur.temp && (state.unit==='metric' ? cur.temp < -5 || cur.temp > 40 : cur.temp < 23 || cur.temp > 104));
+    if(severe){
+      new Notification('WeatherWise — Peringatan Cuaca', { body: `Kondisi ekstrim terdeteksi: ${cur.weather[0].description}.` });
+    }
+  }
+
+  // ---- Service worker & manifest creation (single-file trick via Blob) ----
+  async function registerManifestAndServiceWorker(){
+    // create manifest blob
+    const manifest = {
+      name: "WeatherWise",
+      short_name: "WeatherWise",
+      description: "A modern progressive weather app (demo).",
+      start_url: ".",
+      display: "standalone",
+      theme_color: "#F5F7FA",
+      background_color: "#F5F7FA",
+      icons:[
+        { src: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='192' height='192'><rect width='100%' height='100%' fill='%23F5F7FA'/><path d='M44 28c0-6.627-5.373-12-12-12-1.225 0-2.405.183-3.5.525C26.148 8.83 20.8 6 14 6 6.268 6 0 12.268 0 20c0 7.732 6.268 14 14 14h30c4.418 0 8-3.582 8-8s-3.582-8-8-8z' fill='%2354A0FF'/></svg>", sizes:"192x192", type:"image/svg+xml" }
+      ]
+    };
+    const manifestBlob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+    const manifestURL = URL.createObjectURL(manifestBlob);
+    const link = document.createElement('link');
+    link.rel = 'manifest';
+    link.href = manifestURL;
+    document.head.appendChild(link);
+
+    // build service worker script as string (caching strategy)
+    const swCode = `
+      const CACHE_NAME = 'weatherwise-shell-v1';
+      const PRECACHE_URLS = ['/', location.pathname];
+
+      self.addEventListener('install', event => {
+        self.skipWaiting();
+        event.waitUntil(
+          caches.open(CACHE_NAME).then(cache => cache.addAll(PRECACHE_URLS))
+        );
+      });
+      self.addEventListener('activate', event => {
+        event.waitUntil(self.clients.claim());
+      });
+
+      self.addEventListener('fetch', event => {
+        const url = new URL(event.request.url);
+        // For API calls to api.openweathermap.org -> try network first, fallback cache
+        if(url.hostname.includes('api.openweathermap.org')) {
+          event.respondWith(
+            fetch(event.request).then(resp => {
+              const copy = resp.clone();
+              caches.open('weatherwise-api').then(c => c.put(event.request, copy));
+              return resp;
+            }).catch(()=> caches.match(event.request))
+          );
+          return;
+        }
+        // For everything else -> cache-first
+        event.respondWith(
+          caches.match(event.request).then(matched => matched || fetch(event.request).then(resp=>{
+            // try to cache new requests (static)
+            return caches.open(CACHE_NAME).then(cache=> { cache.put(event.request, resp.clone()); return resp; });
+          }).catch(()=> caches.match('/')))
+        );
+      });
+    `;
+    const swBlob = new Blob([swCode], {type:'text/javascript'});
+    const swUrl = URL.createObjectURL(swBlob);
+
+    if('serviceWorker' in navigator){
+      try{
+        const reg = await navigator.serviceWorker.register(swUrl);
+        console.log('Service Worker registered:', reg);
+      } catch(err){
+        console.error('SW register failed', err);
+      }
+    } else console.warn('Service Worker not supported');
+  }
+
+  // ---- Simple utility: parse lat/lon from string if needed ----
+
+  // ---- End of file ----
+  </script>
+</body>
+</html>
